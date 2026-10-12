@@ -1,8 +1,8 @@
-# Secret giả trong lịch sử Git — điền trong checkpoint 4
+# Secrets incident — token giả trong lịch sử (CP4)
 
-- Scanner và phiên bản:
-- Commit chứa token giả:
-- File, rule và kết quả quét lịch sử:
-- Kết quả quét file hiện tại:
-- Nếu đây là credential thật, cần xử lý thế nào:
-- Vì sao xoá file khỏi HEAD hoặc pin dependency vẫn chưa đủ:
+- Scanner và phiên bản: Gitleaks v8.30.1 (`gitleaks version` → `8.30.1`), config `.gitleaks.toml`, binary trong PATH (lab cài từ release chính thức).
+- Commit chứa token giả: `1bdd849` (`1bdd849922156c868a5ee9293d68f5b72e242d2c`, message "chore: seed student lab with synthetic secret exercise").
+- File, rule và kết quả quét lịch sử: `gitleaks git --config .gitleaks.toml --redact --verbose .` → exit code 1 (mong đợi), 1 finding: `File: lab-fake-secret.txt:1`, `RuleID: lab24-synthetic-token`, `Commit: 1bdd849...`, regex `LAB24_FAKE_TOKEN=LAB24-DEMO-[A-Z0-9]{16}`, token đã redact. File này đã bị xoá ở commit sau nên không còn ở HEAD (`git show HEAD:lab-fake-secret.txt` báo không tồn tại) — đúng tính chất bài tập.
+- Kết quả quét file hiện tại: lần đầu `gitleaks dir --config .gitleaks.toml --redact --verbose .` báo 1 finding `generic-api-key` tại `.venv/Lib/site-packages/setuptools/_distutils/msvccompiler.py:45` — đây là false positive trong thư viện, không phải secret của bài. Đã thêm allowlist đúng path `\.venv/` vào `.gitleaks.toml` (không tắt rule `lab24-synthetic-token`, không bỏ qua cả repo). Chạy lại: `dir` → `no leaks found`, exit 0; `git` → vẫn 1 finding ở `1bdd849`, exit 1 như kỳ vọng. `pre-commit run --all-files` → Passed.
+- Nếu đây là credential thật, cần xử lý: thu hồi/rotate ngay tại dịch vụ cấp token (revoke key cũ, cấp key mới), rà soát log sử dụng xem đã bị dùng sai ở đâu (audit access, kiểm bản sao/fork/log), thay key ở mọi nơi triển khai, và coi mọi bản sao trong lịch sử Git/fork/clone là đã lộ — không bao giờ commit secret thật để "sửa" bằng commit xoá.
+- Vì sao xoá file khỏi HEAD hoặc pin dependency vẫn chưa đủ: lịch sử Git vẫn giữ blob cũ nên token vẫn trích được bằng `git show 1bdd849:...`; xoá file chỉ giấu ở HEAD chứ không thu hồi quyền của credential. Pin dependency (`requirements.lock` hash) và hook (`gitleaks-system` rev `v8.30.1`) chỉ ngăn lỗi tương lai / phát hiện sớm, không làm mất hiệu lực secret đã lộ — bước rotate tại nhà cung cấp mới vô hiệu hoá được nó.

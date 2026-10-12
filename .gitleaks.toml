@@ -8,3 +8,7 @@ id = "lab24-synthetic-token"
 description = "A deliberately invalid lab token; never use real credentials"
 regex = '''LAB24_FAKE_TOKEN=LAB24-DEMO-[A-Z0-9]{16}'''
 keywords = ["LAB24_FAKE_TOKEN"]
+
+[allowlist]
+description = "Bỏ qua thư viện trong môi trường ảo local (false positive generic-api-key trong setuptools)"
+paths = ['''\.venv/''']

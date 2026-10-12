@@ -1,48 +1,63 @@
-"""BƯỚC 3d — audit ledger append-only, tamper-evident (10').
-
-JSONL, mỗi tool call một dòng. Đọc CHECKPOINTS.md (§3d).
-
-Interface bắt buộc (tests/test_ledger.py và agent/runner.py gọi trực tiếp):
-
-    append(entry: dict, path: pathlib.Path) -> dict
-        `entry` phải có tối thiểu các field:
-            ts, agent_id, run_id, tool, args_hash, classification,
-            decision, reason
-        Hàm tự thêm 2 field:
-            prev_hash  = hash của dòng ngay trước trong file này, hoặc
-                         "0" * 64 nếu là dòng đầu tiên
-            hash       = sha256 tính từ nội dung dòng NÀY (bao gồm cả
-                         prev_hash, KHÔNG bao gồm field hash) — dùng
-                         json.dumps(..., sort_keys=True) trước khi hash
-                         để thứ tự field không ảnh hưởng kết quả.
-        Append 1 dòng JSON (utf-8, ensure_ascii=False) vào cuối `path`,
-        tạo file/thư mục cha nếu chưa có. Trả về dict đầy đủ đã ghi
-        (bao gồm prev_hash/hash).
-
-    verify(path: pathlib.Path) -> bool
-        Đọc toàn bộ file, trả về True nếu TẤT CẢ đều đúng:
-          - mọi dòng có `reason` non-empty
-          - prev_hash của dòng n == hash đã lưu của dòng n-1 (dòng đầu so
-            với "0" * 64)
-          - hash lưu trong dòng n khớp lại khi tính lại từ nội dung dòng đó
-        Trả về False nếu một dòng còn trong file bị sửa mà không tính lại
-        hash, nếu xoá/chèn giữa file làm đứt liên kết, hoặc thiếu reason.
-        Chỉ kiểm tra file hiện có KHÔNG phát hiện được việc xoá dòng cuối
-        hoặc viết lại cả file và tính lại chuỗi. Muốn phát hiện cắt đuôi
-        phải lưu hash/số dòng cuối ở một nơi tin cậy bên ngoài file rồi
-        đối chiếu. Bài lab không cung cấp mốc đó.
-
-Sinh viên phải tự tay chứng minh được: sửa 1 ký tự trong 1 dòng giữa file
-rồi gọi verify() phải trả về False.
-"""
+"""BƯỚC 3d — audit ledger append-only, tamper-evident (10')."""
 from __future__ import annotations
 
+import hashlib
+import json
 from pathlib import Path
 
 
+def _calc_hash(record_without_hash: dict) -> str:
+    canonical = json.dumps(record_without_hash, sort_keys=True, ensure_ascii=False)
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+
 def append(entry: dict, path: Path) -> dict:
-    raise NotImplementedError("BƯỚC 3d: implement ledger append")
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    prev_hash = "0" * 64
+    if path.exists() and path.stat().st_size > 0:
+        lines = path.read_text(encoding="utf-8").splitlines()
+        # Bỏ dòng trống cuối (nếu có).
+        lines = [ln for ln in lines if ln.strip()]
+        if lines:
+            try:
+                last = json.loads(lines[-1])
+                prev_hash = last.get("hash", "0" * 64)
+            except Exception:
+                prev_hash = "0" * 64
+    record = dict(entry)
+    record.pop("hash", None)
+    record["prev_hash"] = prev_hash
+    record["hash"] = _calc_hash(record)
+    with path.open("a", encoding="utf-8") as f:
+        f.write(json.dumps(record, ensure_ascii=False) + "\n")
+    return record
 
 
 def verify(path: Path) -> bool:
-    raise NotImplementedError("BƯỚC 3d: implement ledger verify")
+    path = Path(path)
+    if not path.exists():
+        return True
+    text = path.read_text(encoding="utf-8")
+    lines = [ln for ln in text.splitlines() if ln.strip()]
+    if not lines:
+        return True
+    prev = "0" * 64
+    for ln in lines:
+        try:
+            rec = json.loads(ln)
+        except Exception:
+            return False
+        # Mọi dòng phải có reason non-empty.
+        if not rec.get("reason"):
+            return False
+        stored_hash = rec.get("hash")
+        stored_prev = rec.get("prev_hash")
+        if not stored_hash or stored_prev != prev:
+            return False
+        rec_no_hash = dict(rec)
+        rec_no_hash.pop("hash", None)
+        if _calc_hash(rec_no_hash) != stored_hash:
+            return False
+        prev = stored_hash
+    return True
